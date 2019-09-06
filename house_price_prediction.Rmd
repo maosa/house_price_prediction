@@ -1,0 +1,1985 @@
+---
+title: "House Price Prediction"
+author: "Andreas Maos"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  pdf_document:
+    toc: true
+    number_sections: true
+---
+
+```{r, setup, include = FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+
+# If required packages are not installed, install them
+
+if(!require(tidyverse)) {install.packages("tidyverse")}
+if(!require(lubridate)) {install.packages("lubridate")}
+if(!require(data.table)) {install.packages("data.table")}
+if(!require(caret)) {install.packages("caret")}
+if(!require(Hmisc)) {install.packages("Hmisc")}
+if(!require(cowplot)) {install.packages("cowplot")}
+if(!require(ggrepel)) {install.packages("ggrepel")}
+if(!require(corrplot)) {install.packages("corrplot")}
+if(!require(RColorBrewer)) {install.packages("RColorBrewer")}
+if(!require(knitr)) {install.packages("knitr")}
+if(!require(kableExtra)) {install.packages("kableExtra")}
+if(!require(tinytex)) {install.packages("tinytex")}
+
+# Needed for several ML models from the caret package
+
+if(!require(plyr)) {install.packages("plyr")}
+if(!require(penalized)) {install.packages("penalized")}
+if(!require(kernlab)) {install.packages("kernlab")}
+if(!require(mboost)) {install.packages("mboost")}
+if(!require(gam)) {install.packages("gam")}
+if(!require(kknn)) {install.packages("kknn")}
+if(!require(gbm)) {install.packages("gbm")}
+if(!require(bst)) {install.packages("bst")}
+if(!require(xgboost)) {install.packages("xgboost")}
+if(!require(randomForest)) {install.packages("randomForest")}
+
+# Clear the environment and any plots
+
+rm(list = ls())
+if(!is.null(dev.list())) { dev.off() }
+
+# Use the `echo = FALSE` parameter to prevent printing the R code of a chunk
+
+# To fix xcolor package warnings
+
+knit_hooks$set(crop = hook_pdfcrop, document = function(x) {
+  sub('\\usepackage[]{xcolor}', '\\usepackage[table]{xcolor}', x, fixed = TRUE)
+})
+
+options(tinytex.verbose = TRUE)
+
+# Set working directory
+
+# setwd(file.path(Sys.getenv("HOME"), "Desktop/house_price_prediction/"))
+
+```
+
+```{r, rmse_function, include = FALSE}
+
+RMSE <- function(true_ratings, predicted_ratings) {
+  
+  sqrt(mean((true_ratings - predicted_ratings)^2))
+  
+}
+
+```
+
+# Introduction
+
+## The project
+
+Owning or renting a property is a big part of people's lives. Besides the comfort and warmth it offers, it also comes with significant expenses. House prices have been increasing for the past 50 years. The [OECD](https://data.oecd.org/price/housing-prices.htm) provides data and interactive visualizations that prove this. Major cities around the world, such as Hong Kong, New York, London and San Francisco have seen their [housing prices skyrocket](https://www.weforum.org/agenda/2019/03/the-worlds-most-expensive-places-to-own-a-home/). A property's price depends on several factors such as size, area, age and many more. With so much housing data now available, would it be possible to predict house prices? This project constitues the final part of the [Professional Certificate in Data Science by HarvardX](https://online-learning.harvard.edu/series/professional-certificate-data-science). The project aims to exploit available information about different houses and leverage the power of data science and machine learning (ML) to predict their prices. Economic and political data were not considered and the analysis focused on house-specific data, although the former can also impact house prices. The data was retrieved, explored, cleaned and then used to predict house prices using several ML models. The methodology and techniques used are descibed in the following sections.
+
+## The dataset
+
+```{r, get_data, include = FALSE}
+
+# Get data from Kaggle
+# URL: https://www.kaggle.com/c/house-prices-advanced-regression-techniques
+
+train <- read_csv(file = "data/train.csv")
+
+test <- read_csv(file = "data/test.csv")
+
+# The test set has no SalePrice column (the aim is to predict this)
+
+```
+
+The data used in this project originated from one of Kaggle's competitions, [**House Prices: Advanced Regression Techniques**](https://www.kaggle.com/c/house-prices-advanced-regression-techniques). A **training set**, a **test set** and a **description file** were available on Kaggle. The description file contained useful information about each feature. The training set was used to explore the data, fit ML models and then make predictions using those models. The models were then evaluated by calculating the **Root Mean Square Error (RMSE)** between the **logarithm** of the predicted value and the logarithm of the observed sales price ([see Appendix](#rmse_code)). Taking logs means that errors in predicting expensive houses and cheap houses will affect the result equally. After fitting ML models, they were used to predict house prices on the test set. Finally, the predictions were submitted to Kaggle to compare how well this analysis did against other people's attempts to predict house prices.
+
+The training set contained `r nrow(train)` rows and `r ncol(train)` columns corresponding to individual houses and to the different house features respectively. Some of these features included *SalePrice*, *Neighborhood*, *RoofStyle*, *YearBuilt* and many more, with the explanation for each one found in the description file. Different features were present in different formats. Some of the columns contained **numeric variables** and others had **character variables**. From the numeric variables, some were **continuous** and some were **ordinal/categorical** features. Also, several columns contained rows with missing values or *NA*. The first step in this analysis was to identify the *NA* values and either fix or remove them. Then, the features were separated into continuous and categorical in order to produce appropriate plots to explore each one.
+
+# Analysis and data wrangling
+
+The downstream sections describe the methods used to explore and analyse the data in order to build accurate ML models. Anything described below has been performed using only the traning set. Data transformations and modifications that were applied on the training set were later applied on the test set as well (code in [Appendix](#modify_data)) in order to be able to make predictions using the test set.
+
+## Check for and fix any NA values
+
+```{r, check_na_values, fig.height = 3, fig.align = "center", echo = FALSE}
+
+na_values <- map_df(.x = colnames(train), .f = function(c) {
+  
+  num_na <- sum(is.na(train[[c]]))
+  
+  if (num_na != 0) {
+    
+    data.frame(col = c,
+               na_n = num_na,
+               na_pct = mean(is.na(train[[c]])),
+               stringsAsFactors = FALSE)
+    
+  } # if
+  
+}) # map_df
+
+na_values %>%
+  arrange(desc(na_n)) %>%
+  ggplot(mapping = aes(x = reorder(col, -na_pct), y = na_pct)) +
+  geom_bar(stat = "identity", color = "grey30", fill = "lightskyblue") +
+  labs(x = "Feature", y = "Percentage of NA values") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),
+        axis.line.x = element_line(color = "black", size = 0.5),
+        axis.line.y = element_line(color = "black", size = 0.5),
+        axis.ticks = element_line())
+
+```
+
+As seen in the plot above, there are `r nrow(na_values)` features with *NA* values in their columns. Some features like *`r na_values %>% arrange(desc(na_n)) %>% top_n(n = 1, wt = na_pct) %>% .$col`* contain may *NAs* whereas others like *`r na_values %>% arrange(desc(na_n)) %>% top_n(n = -1, wt = na_pct) %>% .$col`* contain just a few. These features could contain useful information that could assist in accurately predicting house prices. As such, each one was further explored to decide how to best deal with the *NAs*. To understand what each of these features described and how to appropriately fill in any *NA* values, the description file was consulted.
+
+The features with *NA* values included: *`r toString(paste0(na_values$col))`*. In all of these, with the exception of *MasVnrArea* and *Electrical*, the *NAs* were replaced with the string *None*. This was because either an *NA* meant that the feature was not present, according the description file, or because the actual value was missing and *None* was the most common value in the column, as in the case of *MasVnrType*. For *MasVnrArea*, the *NAs* were replaced with the numeric value 0 as the corresponding *MasVnrType* rows had *None*. In the case of *Electrical*, the *NAs* were replaced with the most common value in the column, *`r names(which.max(table(train$Electrical)))`*. Initially, in features such as *PoolQC* and *FireplaceQu*, the *NAs* were to be replace with characters such as *NoPool* and *NoFireplace*. However, using *None* instead made things easier downstream.
+
+The features *LotFrontage* and *GarageYrBlt* were originally removed as it was not clear how to best replace the *NAs* in these ones. Later, it was decided to replace the *NAs* in *LotFrontage* with the mean of the remaining values in the column which was `r round(mean(train$LotFrontage[!is.na(train$LotFrontage)]), 2)`. *GarageYrBlt* was still kept out as there were other features related to the house's garage that already provided enough information.
+
+```{r, fix_na, include = FALSE}
+
+# The PoolQC column lists the pool quality
+
+train[which(is.na(train$PoolQC)), "PoolQC"] <- "None"
+
+# MiscFeature lists any additional miscellaneous features
+
+train[which(is.na(train$MiscFeature)), "MiscFeature"] <- "None"
+
+# The Alley column lists the type of alley access to property
+
+train[which(is.na(train$Alley)), "Alley"] <- "None"
+
+# The Fence column lists the fence quality
+
+train[which(is.na(train$Fence)), "Fence"] <- "None"
+
+# The FireplaceQu column lists the fireplace quality
+
+train[which(is.na(train$FireplaceQu)), "FireplaceQu"] <- "None"
+
+# The LotFrontage column lists the linear feet of street connected to property
+
+train[which(is.na(train$LotFrontage)), "LotFrontage"] <-
+  mean(train$LotFrontage[!is.na(train$LotFrontage)])
+
+# Fix any columns referring to garage features
+
+for (g in na_values$col[str_detect(string = na_values$col, pattern = "^Garage[^Y]")]) {
+  train[which(is.na(train[[g]])), g] <- "None"
+}
+
+# Fix any columns referring to basement features
+
+for (b in na_values$col[str_detect(string = na_values$col, pattern = "^Bsmt")]) {
+  train[which(is.na(train[[b]])), b] <- "None"
+}
+
+# MasVnrType lists the masonry veneer type - assume it takes the most common value
+
+train[which(is.na(train$MasVnrType)), "MasVnrType"] <- names(which.max(table(train$MasVnrType)))
+
+# MasVnrArea lists the masonry veneer area in square feet - replace NAs with 0
+# since above the same exact indices for MasVnrType were replaced with "None"
+
+train[which(is.na(train$MasVnrArea)), "MasVnrArea"] <- 0
+
+# Electrical column has 1 NA value - assume it takes the most common value
+
+train[which(is.na(train$Electrical)), "Electrical"] <- names(which.max(table(train$Electrical)))
+
+# Check again for any NAs
+
+na_values <- map_df(.x = colnames(train), .f = function(c) {
+  
+  num_na <- sum(is.na(train[[c]]))
+  
+  if (num_na != 0) {
+    
+    data.frame(col = c,
+               na_n = num_na,
+               na_pct = mean(is.na(train[[c]])),
+               stringsAsFactors = FALSE)
+    
+  } # if
+  
+}) # map_df
+
+na_values %>%
+  arrange(desc(na_n))
+
+```
+
+```{r, remove_na_cols, include = FALSE}
+
+# Remove any columns with NAs (for now)
+
+train <- train %>%
+  select(-c(na_values$col))
+
+```
+
+## Check and fix column names
+
+Some ML model would fail to fit if any of the feature names (i.e. column names) start with a digit. Hence, the column names of the dataset were checked to detect if any started with a digit. The `str_which()` function with the regex pattern `^\\d` were used to detect these columns. It turned out that `r length(colnames(train)[str_which(string = colnames(train), pattern = "^\\d")])` features, *`r colnames(train)[str_which(string = colnames(train), pattern = "^\\d")]`*, had their name starting with a digit. These were changed to *FirstFlrSF*, *SecondFlrSF* and *ThreeSsnPorch* respecitvely.
+
+```{r, fix_colnames, include = FALSE}
+
+# Rename colnames to avoid any that start with a digit
+
+colnames(train)[str_which(string = colnames(train), pattern = "^\\d")]
+
+colnames(train)[str_which(string = colnames(train), pattern = "^\\d")][1] <- "FirstFlrSF"
+
+colnames(train)[str_which(string = colnames(train), pattern = "^\\d")][1] <- "SecondFlrSF"
+
+colnames(train)[str_which(string = colnames(train), pattern = "^\\d")][1] <- "ThreeSsnPorch"
+
+if (any(grepl(pattern = "^\\d", colnames(train)))) {
+  warning("ERROR! Check that there are no column names that start with a digit!")
+}
+
+```
+
+## Exploratory data analysis {#exploratory_data_analysis}
+
+In the following sections, the distribution of the *SalePrice* and the relationship of other features with *SalePrice* were studied.
+
+### Sale price distribution
+
+As shown below, in the plots in the first row, the *SalePrice* feature was not normally distributed. It had a right (or positive) skew. Hence, the *SalePrice* column was transformed using the `log1p()` function and was brought closer to the normal distribution as shown by the plots in the second row.
+
+```{r, sale_price_distribution, fig.height = 6, fig.align = "center", echo = FALSE}
+
+sale_price_density <- train %>%
+  ggplot(mapping = aes(x = SalePrice, y = ..density..)) +
+  geom_density(alpha = 0.5, color = "grey30", fill = "lightskyblue") +
+  labs(x = "Sale Price", y = "Density") +
+  theme_minimal() +
+  theme(axis.line.x = element_line(color = "black", size = 0.5),
+        axis.line.y = element_line(color = "black", size = 0.5),
+        axis.ticks = element_line())
+
+params <- train %>%
+  dplyr::summarize(mean = mean(SalePrice), sd = sd(SalePrice))
+
+qqplot <- train %>%
+  ggplot(mapping = aes(sample = SalePrice)) +
+  geom_qq(dparams = params, alpha = 0.5) + # the mean and standard deviation match those of the data
+  geom_abline(color = "red") +
+  labs(x = "Theoretical", y = "Sample") +
+  theme_minimal() +
+  theme(axis.line.x = element_line(color = "black", size = 0.5),
+        axis.line.y = element_line(color = "black", size = 0.5),
+        axis.ticks = element_line())
+
+norm_sale_price_density <- train %>%
+  mutate(SalePrice = log1p(SalePrice)) %>%
+  ggplot(mapping = aes(x = SalePrice, y = ..density..)) +
+  geom_density(alpha = 0.5, color = "grey30", fill = "lightskyblue") +
+  labs(x = "Sale Price", y = "Density") +
+  theme_minimal() +
+  theme(axis.line.x = element_line(color = "black", size = 0.5),
+        axis.line.y = element_line(color = "black", size = 0.5),
+        axis.ticks = element_line())
+
+norm_params <- train %>%
+  mutate(SalePrice = log1p(SalePrice)) %>%
+  dplyr::summarize(mean = mean(SalePrice), sd = sd(SalePrice))
+
+norm_qqplot <- train %>%
+  mutate(SalePrice = log1p(SalePrice)) %>%
+  ggplot(mapping = aes(sample = SalePrice)) +
+  geom_qq(dparams = norm_params, alpha = 0.5) +
+  geom_abline(color = "red") +
+  labs(x = "Theoretical", y = "Sample") +
+  theme_minimal() +
+  theme(axis.line.x = element_line(color = "black", size = 0.5),
+        axis.line.y = element_line(color = "black", size = 0.5),
+        axis.ticks = element_line())
+
+
+plot_grid(sale_price_density, qqplot, norm_sale_price_density, norm_qqplot,
+          nrow = 2, ncol = 2)
+
+# SalePrice data is not normally distributed
+
+# Use log1p() to transform it and get it closer to the normal distribution
+
+```
+
+```{r, transform_prices_to_normal_dist, include = FALSE}
+
+# Transform the SalePrice column to follow a normal distribution
+
+train$SalePrice <- log1p(train$SalePrice)
+
+```
+
+### Numeric value columns
+
+```{r, get_numeric_cols, include = FALSE}
+
+# Get columns with numeric values
+
+numeric_cols <- sapply(X = colnames(train), FUN = function(c) {
+  
+  ifelse(test = class(train[[c]]) == "numeric", yes = TRUE, no = FALSE)
+  
+})
+
+# Isolate columns with numeric values
+
+num_train <- train[, numeric_cols]
+
+```
+
+As it was mentioned before, some columns had numeric and some had character variables. First, the numeric ones were isolated and their relationship with *SalePrice* was studied. Of the training set's `r ncol(train)` columns, `r ncol(num_train)` contained numeric variables. These numeric features could be further split into continuous and ordinal/categorical features. The separation was done manually with the help of the description file. First, the continuous features were isolated and plotted against the *SalePrice*. A scatter plot with a line of best fit was plotted for each continuous feature.
+
+\newpage
+
+#### Continuous features
+
+```{r, continuous_features, fig.height = 11, fig.width = 8.5, fig.fullwidth = TRUE, fig.align = "center", echo = FALSE}
+
+# Some features, although of class numeric, can be considered categorical
+
+cols_ignore <- c("MSSubClass", "OverallQual", "OverallCond",
+                 "BsmtFullBath", "BsmtHalfBath", "FullBath",
+                 "HalfBath", "BedroomAbvGr", "KitchenAbvGr",
+                 "TotRmsAbvGrd", "Fireplaces", "GarageCars",
+                 "MiscVal", "YearRemodAdd", "MoSold",
+                 "YrSold", "YearBuilt")
+
+num_train <- num_train %>%
+  select(-cols_ignore)
+
+scatter_plots <- lapply(X = colnames(num_train)[-which(colnames(num_train) %in% c("Id", "SalePrice"))],
+                            FUN = function(c) {
+                              
+                              num_train %>%
+                                ggplot(mapping = aes(x = num_train[[c]], y = SalePrice)) +
+                                geom_point(alpha = 0.2) +
+                                geom_smooth(method = "lm") +
+                                labs(x = c, y = "Sale Price") +
+                                theme_minimal() +
+                                theme(axis.line.x = element_line(color = "black", size = 0.5),
+                                      axis.line.y = element_line(color = "black", size = 0.5),
+                                      axis.ticks = element_line())
+                              
+                            }) # lapply
+
+plot_grid(plotlist = scatter_plots, ncol = 3, labels = "AUTO", label_size = 12)
+
+```
+
+\newpage
+
+#### Ordinal features
+
+Then, the categorical/ordnial features were isolated and plotted against the *SalePrice* using boxplots. An ordinal variable is similar to a categorical variable. The difference between the two is that for ordinal features there is a clear ordering of the variables.
+
+```{r, categorical_features, fig.height = 10, fig.width = 8.5, fig.fullwidth = TRUE, fig.align = "center", echo = FALSE}
+
+box_plots <- lapply(X = colnames(select(.data = train, cols_ignore)),
+                            FUN = function(c) {
+                              
+                              gg_tmp <- train %>%
+                                select(SalePrice, cols_ignore) %>%
+                                mutate_at(.vars = cols_ignore, .funs = factor) %>%
+                                ggplot(mapping = aes(x = .[[c]], y = SalePrice, fill = .[[c]])) +
+                                geom_boxplot(outlier.size = 1, outlier.alpha = 0.5) +
+                                labs(x = c, y = "Sale Price") +
+                                theme_minimal()
+                              
+                              if (c %in% c("MSSubClass", "MiscVal")) {
+                                
+                                gg_fin <- gg_tmp +
+                                  theme(axis.text.x = element_text(angle = 90, hjust = 1, size = 8),
+                                        axis.line.x = element_line(color = "black", size = 0.5),
+                                        axis.line.y = element_line(color = "black", size = 0.5),
+                                        axis.ticks = element_line(),
+                                        legend.position = "none")
+                                
+                              } else if (c %in% c("YearBuilt", "YearRemodAdd")) {
+                                
+                                gg_fin <- gg_tmp +
+                                  theme(axis.text.x = element_blank(),
+                                        axis.line.x = element_line(color = "black", size = 0.5),
+                                        axis.line.y = element_line(color = "black", size = 0.5),
+                                        axis.ticks = element_line(),
+                                        legend.position = "none")
+                                
+                              } else {
+                                
+                                gg_fin <- gg_tmp +
+                                  theme(axis.line.x = element_line(color = "black", size = 0.5),
+                                        axis.line.y = element_line(color = "black", size = 0.5),
+                                        axis.ticks = element_line(),
+                                        legend.position = "none")
+                                
+                              } # else
+                              
+                              return(gg_fin)
+                              
+                            }) # lapply
+
+plot_grid(plotlist = box_plots, ncol = 3, labels = "AUTO", label_size = 12)
+
+```
+
+\newpage
+
+### Character value columns
+
+After studying the columns with numeric features, the focus shifted on features with character variables.
+
+#### Convert quality/condition related columns to numeric {#quality_condition_columns}
+
+Of the `r ncol(train[, !numeric_cols])` columns with character variables, it was noticed that some of them encoded features referring to the quality or condition of a house attribute (regex pattern `.Q.|.Cond$`). These contained character values that could easily be replaced with numeric ones as shown in the table below. The character value meaning was extracted from the description file while the value *None* came from the *NA* replacements that occured above.
+
+&nbsp;
+
+```{r, quality_key_replacements, echo = FALSE}
+
+data.frame(Value = c("None", "Po", "Fa", "TA", "Gd", "Ex"),
+           Meaning = c("Not applicable",
+                       "Poor", "Fair", "Typical/Average", "Good", "Excellent"),
+           Replacement = c(0, 1, 2, 3, 4, 5)) %>%
+  knitr::kable(align = c("c", "c", "c")) %>%
+  kable_styling(bootstrap_options = c("bordered"), full_width = TRUE) %>%
+  row_spec(row = 0, bold = TRUE, color = "white", background = "black") %>%
+  row_spec(1:6, color = "black")
+
+```
+
+&nbsp;
+
+```{r, character_columns_numeric, fig.height = 6, fig.width = 8.5, fig.fullwidth = TRUE, fig.align = "center", echo = FALSE}
+
+# Isolate columns with character values but also include the SalePrice column
+
+chr_train <- bind_cols(train[, !numeric_cols], train[, "SalePrice"]) %>% data.frame()
+
+# Get columns with quality/condition information
+
+qu_cols <- colnames(chr_train)[str_detect(string = colnames(chr_train), pattern = ".Q.|.Cond$")]
+
+# Convert character ratings to numeric ones - these will still be categorical features
+
+for (c in qu_cols) {
+
+  chr_train[[c]] <- replace(x = chr_train[[c]], list = chr_train[[c]] == "Ex", values = 5)
+
+  chr_train[[c]] <- replace(x = chr_train[[c]], list = chr_train[[c]] == "Gd", values = 4)
+
+  chr_train[[c]] <- replace(x = chr_train[[c]],  list = chr_train[[c]] == "TA", values = 3)
+
+  chr_train[[c]] <- replace(x = chr_train[[c]], list = chr_train[[c]] == "Fa", values = 2)
+
+  chr_train[[c]] <- replace(x = chr_train[[c]], list = chr_train[[c]] == "Po", values = 1)
+
+  chr_train[[c]] <- replace(x = chr_train[[c]],
+                            list = !chr_train[[c]] %in% c(1, 2, 3, 4, 5), values = 0)
+
+  chr_train[[c]] <- factor(x = as.numeric(chr_train[[c]]))
+
+} # loop
+
+chr_boxplots <- lapply(X = qu_cols, FUN = function(c) {
+  
+  chr_train %>%
+    ggplot(mapping = aes(x = .[[c]], y = SalePrice, fill = .[[c]])) +
+    geom_boxplot(outlier.size = 1, outlier.alpha = 0.5) +
+    labs(x = c, y = "Sale Price") +
+    theme_minimal() +
+    theme(axis.line.x = element_line(color = "black", size = 0.5),
+          axis.line.y = element_line(color = "black", size = 0.5),
+          axis.ticks = element_line(),
+          legend.position = "none")
+  
+}) # lapply
+
+plot_grid(plotlist = chr_boxplots, ncol = 4, labels = "AUTO", label_size = 12)
+
+```
+
+```{r, update_num_train_1, include = FALSE}
+
+# Add the (now) numeric columns of chr_train to num_train
+
+num_train <- train[, numeric_cols] %>%
+  bind_cols(chr_train[, qu_cols])
+
+```
+
+\newpage
+
+#### Explore the remaining columns
+
+The remaining `r ncol(select(.data = chr_train, -c(SalePrice, qu_cols)))` features contained character variables but replacing these with numbers was not straightforward. As these represented categorical features, they were plotted against *SalePrice* using boxplots. Before plotting, the column entries were converted to factors and their levels were ordered in order of asceding median *SalePrice*. Here, not all `r ncol(select(.data = chr_train, -c(SalePrice, qu_cols)))` plots are shown, but rather only those that were observed to have an effect on *SalePrice*. These columns were converted to numeric just like the quality/condition related columns [above](#quality_condition_columns). Features that could be converted to numbers include: *MSZoning*, *Neighborhood*, *MasVnrType*, *Foundation*, *BsmtExposure*, *Electrical*, *GarageType* and *GarageFinish*.
+
+```{r, remaining_chr_columns, fig.height = 8, fig.width = 8.5, fig.fullwidth = TRUE, fig.align = "center", echo = FALSE}
+
+# Convert the remaining columns to factors and order the levels by the median SalePrice
+
+chr_extra_boxplots <- lapply(X = colnames(select(.data = chr_train, -c(SalePrice, qu_cols))),
+                             FUN = function(c) {
+                               
+                               gg_tmp <- chr_train %>%
+                                 mutate(tmp_col = reorder(x = factor(.[[c]]),
+                                                          X = SalePrice,
+                                                          FUN = median)) %>%
+                                 ggplot(mapping = aes(x = tmp_col, y = SalePrice, fill = tmp_col)) +
+                                 geom_boxplot(outlier.size = 1, outlier.alpha = 0.5) +
+                                 labs(x = c, y = "Sale Price") +
+                                 theme_minimal()
+                               
+                               if (c %in% c("Neighborhood", "Exterior1st", "Exterior2nd")) {
+                                 
+                                 gg_fin <- gg_tmp +
+                                   theme(axis.text.x = element_text(angle = 90, hjust = 1),
+                                         axis.line.x = element_line(color = "black", size = 0.5),
+                                         axis.line.y = element_line(color = "black", size = 0.5),
+                                         axis.ticks = element_line(),
+                                         legend.position = "none")
+                                 
+                               } else {
+                                 
+                                 gg_fin <- gg_tmp +
+                                   theme(axis.line.x = element_line(color = "black", size = 0.5),
+                                         axis.line.y = element_line(color = "black", size = 0.5),
+                                         axis.ticks = element_line(),
+                                         legend.position = "none")
+                                 
+                               } # else
+                               
+                               return(gg_fin)
+  
+}) # lapply
+
+to_plot <- which(colnames(select(.data = chr_train, -c(SalePrice, qu_cols))) %in%
+                   c("MSZoning", "Neighborhood", "MasVnrType",
+                     "Foundation", "BsmtExposure", "Electrical",
+                     "GarageType", "GarageFinish"))
+
+plot_grid(plotlist = chr_extra_boxplots[to_plot], ncol = 2, labels = "AUTO", label_size = 12)
+
+```
+
+```{r, modify_remaining_cols, include = FALSE}
+
+# Modify some character containing columns - dummy coding
+
+chr_train <- chr_train %>%
+  mutate(MSZoning = reorder(x = factor(x = chr_train$MSZoning),
+                            X = SalePrice, FUN = median)) %>%
+  mutate(Neighborhood = reorder(x = factor(x = chr_train$Neighborhood),
+                                X = SalePrice, FUN = median)) %>%
+  mutate(MasVnrType = reorder(x = factor(x = chr_train$MasVnrType),
+                              X = SalePrice, FUN = median)) %>%
+  mutate(Foundation = reorder(x = factor(x = chr_train$Foundation),
+                              X = SalePrice, FUN = median)) %>%
+  mutate(BsmtExposure = reorder(x = factor(x = chr_train$BsmtExposure),
+                                X = SalePrice, FUN = median)) %>%
+  mutate(Electrical = reorder(x = factor(x = chr_train$Electrical),
+                              X = SalePrice, FUN = median)) %>%
+  mutate(GarageType = reorder(x = factor(x = chr_train$GarageType),
+                              X = SalePrice, FUN = median)) %>%
+  mutate(GarageFinish = reorder(x = factor(x = chr_train$GarageFinish),
+                                X = SalePrice, FUN = median))
+
+chr_train$MSZoning <- plyr::mapvalues(x = chr_train$MSZoning,
+                                      from = levels(chr_train$MSZoning),
+                                      to = seq(1, length(levels(chr_train$MSZoning)), 1))
+  
+chr_train$Neighborhood <- plyr::mapvalues(x = chr_train$Neighborhood,
+                                          from = levels(chr_train$Neighborhood),
+                                          to = seq(1, length(levels(chr_train$Neighborhood)), 1))
+
+chr_train$MasVnrType <- plyr::mapvalues(x = chr_train$MasVnrType,
+                                        from = levels(chr_train$MasVnrType),
+                                        to = seq(1, length(levels(chr_train$MasVnrType)), 1))
+
+chr_train$Foundation <- plyr::mapvalues(x = chr_train$Foundation,
+                                        from = levels(chr_train$Foundation),
+                                        to = seq(1, length(levels(chr_train$Foundation)), 1))
+
+chr_train$BsmtExposure <- plyr::mapvalues(x = chr_train$BsmtExposure,
+                                          from = levels(chr_train$BsmtExposure),
+                                          to = seq(1, length(levels(chr_train$BsmtExposure)), 1))
+
+chr_train$Electrical <- plyr::mapvalues(x = chr_train$Electrical,
+                                        from = levels(chr_train$Electrical),
+                                        to = seq(1, length(levels(chr_train$Electrical)), 1))
+
+chr_train$GarageType <- plyr::mapvalues(x = chr_train$GarageType,
+                                        from = levels(chr_train$GarageType),
+                                        to = seq(1, length(levels(chr_train$GarageType)), 1))
+
+chr_train$GarageFinish <- plyr::mapvalues(x = chr_train$GarageFinish,
+                                          from = levels(chr_train$GarageFinish),
+                                          to = seq(1, length(levels(chr_train$GarageFinish)), 1))
+
+updated_cols <- c("MSZoning", "Neighborhood", "MasVnrType",
+                  "Foundation", "BsmtExposure", "Electrical",
+                  "GarageType", "GarageFinish")
+
+```
+
+```{r, update_num_train_2, include = FALSE}
+
+# Add the new numeric columns of chr_train to num_train
+
+num_train <- train[, numeric_cols] %>%
+  bind_cols(chr_train[, qu_cols]) %>%
+  bind_cols(chr_train[, updated_cols])
+
+```
+
+\newpage
+
+## Feature correlations {#feature_correlations}
+
+By this point, all the numeric features as well as the character ones converted to numeric, had been merged into a single data frame. All the entries of the data frame were in numeric format. The `rcorr()` function from the `Hmisc` package was used to calculate the **correlation coefficient** along with its corresponding **p-value** for each feature-feature pair. The **correlogram** is shown below with blue corresponding to positive correlation, red to negative correlation and grey crosses to feature-feature pairs with a non-significant p-value for their correlation coefficient. This was used to get a more quantitative representation of the correlation of *SalePrice* with the other variables, as opposed to the more visual scatter and box plots shown in the previous sections.
+
+```{r, correlation_plot, echo = FALSE, fig.height = 6, fig.width = 8.5, fig.fullwidth = TRUE, fig.align = "center"}
+
+# Reconstruct num_train
+
+num_train <- train[, numeric_cols] %>%
+  bind_cols(chr_train[, qu_cols]) %>%
+  bind_cols(chr_train[, updated_cols]) %>%
+  select(-c(Id))
+
+# rcorr() returns a list with elements r, the matrix of correlations,
+# n the matrix of number of observations used in analyzing each pair of variables,
+# and P, the asymptotic P-values
+
+cor_matrix <- rcorr(x = as.matrix(num_train), type = c("pearson","spearman"))
+
+# Color intensity and the size of the circle are proportional to the correlation coefficients
+
+# The correlation matrix is reordered according to the correlation coefficient using hclust method
+
+# Insignificant correlations (p-value > 0.01) are wiped out
+
+corrplot(corr = cor_matrix$r,
+         p.mat = cor_matrix$P,
+         order = "hclust",
+         sig.level = 0.01,
+         method = "color",
+         # method = "circle",
+         # type = "upper",
+         # insig = "blank",
+         insig = "pch",
+         pch.cex = 0.4,
+         pch.col = "grey",
+         tl.cex = 0.5,
+         tl.col = "black",
+         tl.srt = 90)
+
+```
+
+```{r, reconstruct_num_train, include = FALSE}
+
+# Reconstruct num_train
+
+num_train <- train[, numeric_cols] %>%
+  bind_cols(chr_train[, qu_cols]) %>%
+  bind_cols(chr_train[, updated_cols]) %>%
+  mutate_all(.funs = as.numeric) %>%
+  select(-c(Id))
+
+```
+
+```{r, feature_engineering_part_1, include = FALSE}
+
+# Filtering and feature engineering based on the correlogram
+
+# Combine columns to create new features
+
+# Then remove the old columns
+
+num_train <- num_train %>%
+  mutate(AgeSold = YrSold - YearBuilt) %>%
+  select(-c(YrSold, YearBuilt, MoSold)) %>%
+  mutate(Pool = PoolArea * PoolQC) %>%
+  select(-c(PoolArea, PoolQC))
+
+# Filter out some data
+
+num_train <- num_train %>%
+  filter(GarageCars < 4) %>%
+  select(-c(ThreeSsnPorch, MiscVal, BsmtHalfBath,
+            OverallCond, ExterCond, BsmtFinSF2,
+            LowQualFinSF))
+
+```
+
+\newpage
+
+## Principal component analysis (PCA) {#pca}
+
+```{r, pca, echo = FALSE, , fig.height = 4, fig.width = 8.5, fig.fullwidth = TRUE, fig.align = "center"}
+
+# Scale and run PCA
+
+pca <- prcomp(scale(x = num_train, center = TRUE, scale = TRUE))
+
+# dim(pca$rotation) # the principal components (vectors q) are stored in this matrix
+
+# dim(pca$x) # the user effects (vectors p) are stored in this matrix
+
+# The PCA function returns a component with the variability
+# of each of the principal components and we can access it and plot it
+
+pca_1 <- data.frame(pc = 1:length(pca$sdev), sd = pca$sdev) %>%
+  ggplot(mapping = aes(x = pc, y = sd)) +
+  geom_point() +
+  labs(x = "Principal component", y = "Standard deviation") +
+  theme_minimal() +
+  theme(axis.line.x = element_line(color = "black", size = 0.5),
+        axis.line.y = element_line(color = "black", size = 0.5),
+        axis.ticks = element_line())
+
+variance_explained <- cumsum(pca$sdev^2/sum(pca$sdev^2))
+
+target_var <- 0.90
+
+target_pc <- seq(1, length(pca$sdev))[variance_explained >= target_var][1]
+
+pca_2 <- data.frame(pc = 1:length(pca$sdev), var_exp = variance_explained) %>%
+  ggplot(mapping = aes(x = pc, y = var_exp)) +
+  geom_point() +
+  geom_hline(yintercept = target_var, size = 0.5, color = "grey30", linetype = "dashed") +
+  geom_vline(xintercept = target_pc,
+             size = 0.5, color = "grey30", linetype = "dashed") +
+  geom_text(mapping = aes(x = target_pc, y = 0, label = target_pc, hjust = -0.5),
+            size = 3, color = "red") +
+  geom_text(mapping = aes(x = 0, y = target_var, label = paste0(target_var, "%"),
+                          vjust = -1, hjust = -0.1),
+            size = 3, color = "red") + 
+  labs(x = "Principal component",
+       y = "Cumulative proportion of variance explained") +
+  theme_minimal() +
+  theme(axis.line.x = element_line(color = "black", size = 0.5),
+        axis.line.y = element_line(color = "black", size = 0.5),
+        axis.ticks = element_line())
+
+pc_1_2 <- data.frame(pca$rotation, name = colnames(num_train)) %>%
+  ggplot(mapping = aes(x = PC1, y = PC2)) +
+  geom_point(alpha = 0.5) +
+  geom_text_repel(mapping = aes(x = PC1, y = PC2, label = name)) +
+  labs(x = "PC1", y = "PC2") +
+  theme_minimal() +
+  theme(axis.line.x = element_line(color = "black", size = 0.5),
+        axis.line.y = element_line(color = "black", size = 0.5),
+        axis.ticks = element_line())
+
+plot_grid(pca_1, pca_2, ncol = 2)
+
+```
+
+PCA was performed to dissect any hidden structure in the data. The **standard deviation** explained by each principal component (PC) along with the **cumulative proportion of variance** per PC were calculated and plotted as shown above. PCA revealed that by using just `r target_pc` PCs one could explain `r target_var`% of the dataset's variance. Since the dimensionality of the dataset was not so high and the computing resources were enough to handle the dataset, the data was not subsetted based on any PCs and as such, all dimensions were used.
+
+### Feature insights and decisions
+
+After exploring the relationship of each feature with *SalePrice*, certain decisions were made:
+
+* *MoSold* and *YrSold* had no effect on *SalePrice*. *MoSold* was removed and *YrSold* was used to create a new, more useful feature encoding the age of a house when it was sold: `AgeSold = YrSold - YearBuilt`.
+* Very few houses Had a pool and hence *PoolArea* and *PoolQC* did not have a very strong correlation with *SalePrice*. However, as they had some significant correlation with *SalePrice*, it was decided to include them by combining them in a single feature as `Pool = PoolArea * PoolQC`.
+* *ThreeSsnPorch*, *MiscVal*, *BsmtHalfBath*, *OverallCond*, *ExterCond*, *BsmtFinSF2* and *LowQualFinSF* seemed to have no or very low correlation with *SalePrice* and hence a decision to remove them was taken.
+* There were `r length(which(train$GarageCars > 3))` houses with `GarageCars == 4` that had a median *SalePrice* less than those with `GarageCars == 3` and almost equal to those with `GarageCars == 2`. These were probably outliers and were removed.
+
+After performing some **data filtering** and **feature engineering** based on the [exploratory data analysis](#exploratory_data_analysis), [feature correlations](#feature_correlations) and [PCA](#pca) results, ML models were ready to be fitted and used to make predictions. Feature correlations were once again checked to confirm that there are no insignificant correlations between features (see correlogram below). In addition, before moving on to fitting ML models, the data frame to be used for model fitting was checked for **matrix rank deficiency**. The code to check for rank deficiency is based on **QR decomposition** and can be found in the [Appendix](#rank_deficiency_test).
+
+\newpage
+
+The following features **were not** used for ML: *`r toString(colnames(train)[which(!colnames(train) %in% colnames(num_train))])`*. This was because there was no evidence that they had an effect on *SalePrice* or because it was hard to encode the character variables with numeric ones.
+
+```{r, recheck_correlations, echo = FALSE, fig.height = 6, fig.width = 8.5, fig.fullwidth = TRUE, fig.align = "center"}
+
+# Re-check correlations
+
+cor_matrix_test <- rcorr(x = as.matrix(num_train), type = c("pearson","spearman"))
+
+corrplot(corr = cor_matrix_test$r,
+         p.mat = cor_matrix_test$P,
+         order = "hclust",
+         sig.level = 0.01,
+         # insig = "blank",
+         insig = "pch",
+         pch.cex = 0.4,
+         pch.col = "grey",
+         method = "color",
+         tl.cex = 0.55,
+         tl.col = "black",
+         tl.srt = 90)
+
+```
+
+```{r, rank_deficiency, include = FALSE}
+
+# Get the matrix's rank - check for rank deficiency
+
+# If rank deficient, check which columns maximize the rank when removed and then
+# check how these correlate with SalePrice. Remove those with low/no correlation
+
+if (qr(num_train)$rank != ncol(num_train)) {
+  
+  # Check which columns, if removed, maximize the rank
+  
+  rankifremoved <- sapply(X = 1:ncol(num_train), function (x) {
+    qr(num_train[, -x])$rank
+  })
+  
+  which(rankifremoved == max(rankifremoved))
+  
+  # Check which columns, from the linearly dependent ones, can be removed
+  
+  # Check feature correlation with SalePrice
+  
+  rank_test <- bind_cols(num_train["SalePrice"],
+                         num_train[, which(rankifremoved == max(rankifremoved))])
+  
+  cor_rank_test <- rcorr(x = as.matrix(rank_test),
+                         type = c("pearson","spearman"))
+  
+  corrplot(corr = cor_rank_test$r,
+           p.mat = cor_rank_test$P,
+           order = "hclust",
+           sig.level = 0.01,
+           type = "upper",
+           insig = "blank",
+           tl.cex = 0.9, tl.col = "black", tl.srt = 90)
+  
+} else {
+  
+  print("Rank deficiency test: OK")
+  
+}
+
+# Remove any problematic columns with low correlation with SalePrice
+
+```
+
+\newpage
+
+# Machine learning
+
+A range of different ML regression models were fitted and then used to make predictions. The ML models were fit both on the **standardised and non-standardised** training set. When standardising, the values were replaced by their *z score* resulting in them being redistributed with mean $\mu = 0$ and standard deviation $\sigma = 1$. For each ML model, the RMSE and duration to fit the model and make predictions were recorded. Different ML algorithms use different parameters and some of these are tunable, for example the number of neighbours in KNN. Properly tuning these parameters results in more accurate predictions. In order to optimize any tunable parameters, **k-fold cross validation** was used.
+
+In k-fold cross validation, the observations are randomly split into **$k$ non-overlapping sets**, with each set consisting of a training set and a test set. In this project, 10-fold cross-validation was utilized meaning that the original training set was split into 10 folds, with each one consisting of 90% training data and 10% test data. For each fold, the model was fitted on the 90% training set, evaluated on the 10% test set and the **mean square error (MSE) for each fold** was calculated. This was repeated using a range of different parameters and at the end the parameters that minimized the MSE were selected. The model with the optimum parameters was returned and used to make predictions of *SalePrice*. The `caret` package enables one to specify how cross-validation will be performed, using the `trainControl()` function, and also to allow repetition of the calculations until the optimum parameters are identified, using the `train()` function. The range of values for any tunable parameter can be expanded beyond the defaults using the `tuneGrid` argument of `train()`.
+
+The following [ML models](https://rdrr.io/cran/caret/man/models.html) were fitted and used to make predictions of *SalePrice*:
+
+* Support vector machine with linear kernel (*svmLinear*)
+* Boosted generalized linear model (*glmboost*)
+* Linear regression (*lm*)
+* Penalized linear regression (*penalized*)
+* Generalized additive model using LOESS (*gamLoess*)
+* Stochastic gradient boosting (*gbm*)
+* K-Nearest neighbour (*kknn*)
+* eXtreme gradient boosting (*xgbLinear*)
+* Random forest (*rf*)
+* eXtreme gradient boosting (*xgbTree*)
+* Boosted tree (*bstTree*)
+
+During the analysis, a **Gradient boosting machines (*gbm_h2o*)** model was also fitted and evaluated with a resulting RMSE of 0.11 (see [Appendix](#gbm_h2o) for code). However, given that this model did not perform significantly better than any of the other models and due to the *gbm_h2o* model running for a lot longer than any of the others, it was decided not to include it in the final results.
+
+```{r, set_up_ml, include = FALSE}
+
+# Initialize several lists to store useful ML outputs
+
+fits <- list()
+
+preds <- list()
+
+rmses <- list()
+
+durations <- list()
+
+# 10-fold cross-validation to be used with the train() function
+
+set.seed(1)
+
+control <- trainControl(method = "cv", number = 10, p = 0.9)
+
+# Define ML models
+
+models <- c("svmLinear", "glmboost", "lm", "penalized", "gamLoess",
+            "gbm", "kknn", "xgbLinear", "rf", "xgbTree", "bstTree")
+
+```
+
+```{r, ml, include = FALSE}
+
+for (m in models) {
+  
+  # modelLookup(m)
+  
+  print(m)
+  
+  before <- Sys.time()
+  
+  set.seed(1)
+  
+  if (m == "kknn") {
+    
+    kknn_params <- expand.grid(kmax = seq(15, 25, 2),
+                               distance = 2,
+                               kernel = "optimal")
+
+    fits[[m]] <- train(SalePrice ~ ., data = num_train, method = m,
+                       trControl = control, tuneGrid = kknn_params)
+    
+  } else if (m == "gamLoess") {
+    
+    gamLoess_params <- expand.grid(span = seq(0.15, 0.75, 0.05), degree = 1)
+    
+    fits[[m]] <- train(SalePrice ~ ., data = num_train, method = m,
+                       trControl = control, tuneGrid = gamLoess_params)
+    
+  } else if (m == "rf") {
+    
+    rf_params <- data.frame(mtry = seq(11, 19, 2), stringsAsFactors = FALSE)
+    
+    fits[[m]] <- train(SalePrice ~ ., data = num_train, method = m,
+                       trControl = control, tuneGrid = rf_params)
+    
+  } else if (m == "bstTree") {
+    
+    bstTree_params <- expand.grid(maxdepth = c(2, 3, 4),
+                                  nu = 0.1,
+                                  mstop = seq(100, 200, 50))
+    
+    fits[[m]] <- train(SalePrice ~ ., data = num_train, method = m,
+                       trControl = control, tuneGrid = bstTree_params)
+    
+  } else {
+    
+    fits[[m]] <- train(SalePrice ~ ., data = num_train, method = m, trControl = control)
+    
+  } # else
+  
+  preds[[m]] <- predict(object = fits[[m]], newdata = num_train)
+  
+  rmses[[m]] <- RMSE(preds[[m]], num_train$SalePrice)
+  
+  rmses[[m]]
+  
+  after <- Sys.time()
+  
+  durations[[m]] <- difftime(after, before, units = 'mins')
+  
+  durations[[m]]
+  
+} # loop
+
+```
+
+```{r, ensemble, include = FALSE}
+
+# Ensemble predictions using models with an RMSE <= max_rmse
+
+max_rmse <- 0.1
+
+best_models <- which(rmses <= max_rmse)
+
+best_preds <- preds[best_models]
+
+model <- "ensemble"
+
+all_preds <- do.call(what = cbind, args = best_preds)
+
+preds[[model]] <- rowMeans(all_preds)
+
+rmses[[model]] <- RMSE(preds[[model]], num_train$SalePrice)
+
+durations[[model]] <- do.call(what = sum, args = durations[best_models])
+
+```
+
+```{r, combine_ml_results, include = FALSE}
+
+rmse_results <- data.frame(model = c(models, "ensemble"),
+                           RMSE = do.call(what = rbind, args = rmses),
+                           time = do.call(what = rbind, args = durations),
+                           stringsAsFactors = FALSE)
+
+```
+
+```{r, ml_scaled, include = FALSE}
+
+# Initialize several lists to store useful ML outputs for the scaled data
+
+fits_scaled <- list()
+
+preds_scaled <- list()
+
+rmses_scaled <- list()
+
+durations_scaled <- list()
+
+# Center and scale the training set
+
+scaled_train <- scale(x = num_train, center = TRUE, scale = TRUE) %>% data.frame()
+
+for (m in models) {
+  
+  print(m)
+  
+  before <- Sys.time()
+  
+  set.seed(1)
+  
+  if (m == "kknn") {
+    
+    kknn_params <- expand.grid(kmax = seq(15, 25, 2),
+                               distance = 2,
+                               kernel = "optimal")
+
+    fits_scaled[[m]] <- train(SalePrice ~ ., data = scaled_train, method = m,
+                              trControl = control, tuneGrid = kknn_params)
+    
+  } else if (m == "gamLoess") {
+    
+    gamLoess_params <- expand.grid(span = seq(0.15, 0.75, 0.05), degree = 1)
+    
+    fits_scaled[[m]] <- train(SalePrice ~ ., data = scaled_train, method = m,
+                              trControl = control, tuneGrid = gamLoess_params)
+    
+  } else if (m == "rf") {
+    
+    rf_params <- data.frame(mtry = seq(11, 19, 2), stringsAsFactors = FALSE)
+    
+    fits_scaled[[m]] <- train(SalePrice ~ ., data = scaled_train, method = m,
+                              trControl = control, tuneGrid = rf_params)
+    
+  } else if (m == "bstTree") {
+    
+    bstTree_params <- expand.grid(maxdepth = c(2, 3, 4),
+                                  nu = 0.1,
+                                  mstop = seq(100, 200, 50))
+    
+    fits_scaled[[m]] <- train(SalePrice ~ ., data = scaled_train, method = m,
+                              trControl = control, tuneGrid = bstTree_params)
+    
+  } else {
+    
+    fits_scaled[[m]] <- train(SalePrice ~ ., data = scaled_train, method = m, trControl = control)
+    
+  } # else
+  
+  preds_scaled[[m]] <- predict(object = fits_scaled[[m]], newdata = scaled_train)
+  
+  rmses_scaled[[m]] <- RMSE(preds_scaled[[m]], scaled_train$SalePrice)
+  
+  rmses_scaled[[m]]
+  
+  after <- Sys.time()
+  
+  durations_scaled[[m]] <- difftime(after, before, units = 'mins')
+  
+  durations_scaled[[m]]
+  
+} # loop
+
+# Ensemble predictions using models with an RMSE <= max_rmse_scaled
+
+max_rmse_scaled <- 0.25
+
+best_models_scaled <- which(rmses_scaled <= max_rmse_scaled)
+
+best_preds_scaled <- preds_scaled[best_models_scaled]
+
+model <- "ensemble"
+
+all_preds_scaled <- do.call(what = cbind, args = best_preds_scaled)
+
+preds_scaled[[model]] <- rowMeans(all_preds_scaled)
+
+rmses_scaled[[model]] <- RMSE(preds_scaled[[model]], scaled_train$SalePrice)
+
+durations_scaled[[model]] <- do.call(what = sum, args = durations_scaled[best_models_scaled])
+
+rmse_results_scaled <- data.frame(model = c(models, "ensemble"),
+                                  RMSE = do.call(what = rbind, args = rmses_scaled),
+                                  time = do.call(what = rbind, args = durations_scaled),
+                                  stringsAsFactors = FALSE)
+
+```
+
+# Results
+
+```{r, results_table, echo = FALSE}
+
+# Results table WITHOUT standardisation
+
+rmse_results %>%
+  mutate(RMSE = round(RMSE, 5),
+         time = round(as.numeric(time), 2)) %>%
+  arrange(desc(RMSE)) %>%
+  dplyr::rename(Model = model, `Time (minutes)` = time) %>%
+  knitr::kable(align = c("l", "c", "c"), row.names = FALSE) %>%
+  kable_styling(bootstrap_options = c("bordered"), full_width = TRUE) %>%
+  row_spec(row = 0, bold = TRUE, color = "white", background = "black") %>%
+  row_spec(row = 1:nrow(rmse_results), color = "black") %>%
+  row_spec(row = nrow(rmse_results), background = "green", bold = TRUE) %>% # minimum RMSE
+  row_spec(row = 1, bold = TRUE, background = "red") %>% # maximum RMSE
+  row_spec(row = which(dplyr::arrange(.data = rmse_results, desc(RMSE))$model == "ensemble"),
+           bold = TRUE, background = "gray") %>%
+  footnote(general = toupper("Without standardisation/scaling"))
+
+# Both results table together - created problems while rendering - ignore...
+
+# all_rmse_results <- dplyr::arrange(.data = rmse_results, desc(RMSE)) %>%
+#   bind_rows( dplyr::arrange(.data = rmse_results_scaled, desc(RMSE)) )
+
+# all_rmse_results %>%
+#   mutate(RMSE = round(RMSE, 5),
+#          time = round(as.numeric(time), 2)) %>%
+#   dplyr::rename(Model = model, `Time (minutes)` = time) %>%
+#   knitr::kable(align = c("l", "c", "c"), row.names = FALSE) %>%
+#   kable_styling(bootstrap_options = c("bordered"), full_width = TRUE) %>%
+#   row_spec(row = 0, bold = TRUE, color = "white", background = "black") %>%
+#   row_spec(row = 1:nrow(all_rmse_results), color = "black") %>%
+#   row_spec(row = nrow(rmse_results), background = "green", bold = TRUE) %>% # minimum RMSE
+#   row_spec(row = nrow(all_rmse_results), background = "green", bold = TRUE) %>% # minimum RMSE
+#   row_spec(row = 1, bold = TRUE, background = "red") %>% # maximum RMSE
+#   row_spec(row = (nrow(rmse_results) + 1), bold = TRUE, background = "red") %>% # maximum RMSE
+#   row_spec(row = which(all_rmse_results$model == "ensemble"), bold = TRUE, background = "gray") %>%
+#   pack_rows(group_label = "Without standardization/scaling",
+#             start_row = 1, end_row = nrow(rmse_results),
+#             label_row_css = "text-align: center; background-color: white; color: black;") %>%
+#   pack_rows(group_label = "With standardization/scaling",
+#             start_row = (nrow(rmse_results) + 1), end_row = nrow(all_rmse_results),
+#             label_row_css = "text-align: center; background-color: white; color: black;")
+
+```
+
+&nbsp;
+&nbsp;
+&nbsp;
+
+```{r, results_table_scaled, echo = FALSE}
+
+# Results table WITH standardisation
+
+rmse_results_scaled %>%
+  mutate(RMSE = round(RMSE, 5),
+         time = round(as.numeric(time), 2)) %>%
+  arrange(desc(RMSE)) %>%
+  dplyr::rename(Model = model, `Time (minutes)` = time) %>%
+  knitr::kable(align = c("l", "c", "c"), row.names = FALSE) %>%
+  kable_styling(bootstrap_options = c("bordered"), full_width = TRUE) %>%
+  row_spec(row = 0, bold = TRUE, color = "white", background = "black") %>%
+  row_spec(row = 1:nrow(rmse_results_scaled), color = "black") %>%
+  row_spec(row = nrow(rmse_results_scaled), background = "green", bold = TRUE) %>% # minimum RMSE
+  row_spec(row = 1, bold = TRUE, background = "red") %>% # maximum RMSE
+  row_spec(row = which(dplyr::arrange(.data = rmse_results_scaled, desc(RMSE))$model == "ensemble"),
+           bold = TRUE, background = "gray") %>%
+  footnote(general = toupper("With standardisation/scaling"))
+
+```
+
+&nbsp;
+
+The tables above show the results for each ML model for both the standardised and non-standardised training set. As the results with standardisation do not differ significantly from those without standardisation, something that was later confirmed by the Kaggle submissions, only the results from the non-standardised training set were considered.
+
+For each model the RMSE and time taken to fit the model and make predictions is shown. The models have been ordered by RMSE with the worst performing model (red) shown at the top and the best performing one (green) shown at the bottom of the table. Overall, it is evident that tree-based models such as *xgbTree*, *bstTree* and *rf* performed better than the rest. The *lm* model had a very similar performance to the *kknn* one, although it being `r round(rmse_results$time[str_which(string = rmse_results$model, "^kknn$")] / rmse_results$time[str_which(string = rmse_results$model, "^lm$")], 0)` times faster. What is surprising is the fact that *lm* performed better than its regularized counterpart, *penalized*, which utilized both [L1 and L2 regularization](https://towardsdatascience.com/l1-and-l2-regularization-methods-ce25e7fc831c).
+
+The best performing model, the one the the minimum RMSE, was *xgbLinear*. This had an RMSE that was about `r round(rmse_results$RMSE[str_which(string = rmse_results$model, "^rf$")] / rmse_results$RMSE[str_which(string = rmse_results$model, "^xgbLinear$")], 0)` times smaller than the next best performing one, *rf*. Was this due to the fact that *xgbLinear* actually is a better model or was it because of overfitting?
+
+Ensembles combine multiple machine learning algorithms into one model to improve predictions, and in this case the ensemble performed really well. The *ensemble* model (grey) combined the predictions obtained by all the models with an RMSE of less than or equal to `r max_rmse`, *`r toString(rmse_results$model[which(rmse_results$RMSE <= max_rmse & rmse_results$model != "ensemble")])`*. Then for each observation, the mean of the predictions across all `r length(rmse_results$model[which(rmse_results$RMSE <= max_rmse & rmse_results$model != "ensemble")])` models was calculated and those means were used to calculate the RMSE. The time taken was calculated by taking the sum of the `r length(rmse_results$model[which(rmse_results$RMSE <= max_rmse & rmse_results$model != "ensemble")])` constituent models's durations. In practice, calculating the ensemble predictions, after the constituent models have been fitted, takes minimal time. Would this be a better method of making predictions by being less prone to overfitting?
+
+Several of these models were used to make predictions on the test set, and those predisctions were submitted to the Kaggle *House Prices: Advanced Regression Techniques* competition. The models and their RMSEs as reported by Kaggle are shown in the table below.
+
+&nbsp;
+
+```{r, kaggle_submissions, echo = FALSE}
+
+data.frame(Model = c("xgbLinear", "rf (standardised)", "rf",
+                     "xgbTree","xgbLinear and rf ensemble",
+                     "bstTree", "ensemble (standardised)", "ensemble"),
+           RMSE = c(0.15347, 0.14649, 0.14580, 0.14488, 0.14373, 0.14360, 0.14272, 0.13960),
+           stringsAsFactors = FALSE) %>%
+  knitr::kable(align = c("l", "c"), row.names = FALSE) %>%
+  kable_styling(bootstrap_options = c("bordered"), full_width = TRUE) %>%
+  row_spec(row = 0, bold = TRUE, color = "white", background = "black") %>%
+  row_spec(row = 1:8, color = "black") %>%
+  row_spec(row = 1, background = "red", bold = TRUE) %>%
+  row_spec(row = 8, background = "green", bold = TRUE) %>%
+  footnote(general = "The observed SalePrice values are knly known by Kaggle")
+
+```
+
+## XGBoost
+
+Two of the best performing models, *`r toString(models[str_which(string = models, pattern = "^xgb")])`*, are based on the [**XGBoost algorithm**](https://xgboost.readthedocs.io/en/latest/). It is hence worth briefly explaining how this works. XGBoost is an **ensemble learning method**. This means that it aggregates the results of multiple leearners, called **weak (or base) learners**. These are models (classifiers, predictors etc.) that perform poorly, meaning that their accuracy is barely higher than that of chance/guessing. Any base learner can be used in the boosting framework such as linear models (*xgbLinear*) and decision trees (*xgbTree*). By combining many weak learners, a strong ensemble model can be built, and this is what XGBoost does. The **boosting approach** employed by this algorithm allows subsequent models to reduce the errors of the previous ones. Essentially, each model learns from its predecessors and updates the residual errors. The result is a **strong learner** that reduces both the [bias and the variance](https://towardsdatascience.com/understanding-the-bias-variance-tradeoff-165e6942b229). A more detailed explanation about how XGBoost works can be found in the [*XGBoost: A Scalable Tree Boosting System* paper](https://arxiv.org/abs/1603.02754).
+
+```{r, modify_data_function, include = FALSE}
+
+# Data transformation function
+
+# This combines all the data wrangling and modification methods/techniques
+# used on the training set throughout the project i.e. replacing NAs, modifying columns etc.
+# It is used to convert the test set in the same format as the
+# training set in order to be able to make predictions using different ML models.
+# These ML models were fit on the training set after it had been modified and hence
+# they could not be used with the original test set to make predictions as the test set would
+# be in a different format to the modified training set that the ML models were fit onto.
+
+# NOTE: This function should be run only from this point onwards. This is because
+# at some points, the function compares variables in num_train
+# to variables in test and uses the differences to properly rename/modify feature entries.
+# Hence, for this comparison and modifications to work, num_train must be in its final format.
+
+modify_data <- function(to_convert, original, final) {
+  
+  # to_convert: the data frame that is to be converted
+  # original: the original working template
+  # final: the final/modified working template
+  # original and final will be used to make appropriate modification to to_convert
+  
+  # Remove GarageYrBlt column
+  
+  to_convert <- to_convert %>% select(-GarageYrBlt)
+  
+  # Detect columns with NAs
+  
+  na_values <- map_df(.x = colnames(to_convert), .f = function(c) {
+    
+    num_na <- sum(is.na(to_convert[[c]]))
+    
+    if (num_na != 0) {
+      
+      data.frame(col = c,
+                 na_n = num_na,
+                 na_pct = mean(is.na(to_convert[[c]])),
+                 stringsAsFactors = FALSE)
+      
+    } # if
+    
+  }) # map_df
+  
+  # Replace NAs as in the training set
+  
+  for (na_col in na_values$col) {
+    
+    if (na_col == "PoolQC") {
+      
+      to_convert[which(is.na(to_convert$PoolQC)), "PoolQC"] <- "None"
+      
+    } else if (na_col == "MiscFeature") {
+      
+      to_convert[which(is.na(to_convert$MiscFeature)), "MiscFeature"] <- "None"
+      
+    } else if (na_col == "Alley") {
+      
+      to_convert[which(is.na(to_convert$Alley)), "Alley"] <- "None"
+      
+    } else if (na_col == "Fence") {
+      
+      to_convert[which(is.na(to_convert$Fence)), "Fence"] <- "None"
+      
+    } else if (na_col == "FireplaceQu") {
+      
+      to_convert[which(is.na(to_convert$FireplaceQu)), "FireplaceQu"] <- "None"
+      
+    } else if (na_col == "LotFrontage") {
+      
+      to_convert[which(is.na(to_convert$LotFrontage)), "LotFrontage"] <-
+        mean(to_convert$LotFrontage[!is.na(to_convert$LotFrontage)])
+      
+    } else if (na_col == "MasVnrType") {
+      
+      to_convert[which(is.na(to_convert$MasVnrType)), "MasVnrType"] <-
+        names(which.max(table(to_convert$MasVnrType)))
+      
+    } else if (na_col == "MasVnrArea") {
+      
+      to_convert[which(is.na(to_convert$MasVnrArea)), "MasVnrArea"] <- 0
+      
+    } else if (na_col == "Electrical") {
+      
+      to_convert[which(is.na(to_convert$Electrical)), "Electrical"] <-
+        names(which.max(table(to_convert$Electrical)))
+      
+    } else if (na_col %in%
+               na_values$col[str_detect(string = na_values$col,
+                                        pattern = "^Garage(?!Y|A|.*Cars$)")]) {
+      
+      to_convert[which(is.na(to_convert[[na_col]])), na_col] <- "None"
+      
+    } else if (na_col %in%
+               na_values$col[str_detect(string = na_values$col,
+                                        pattern = "^Bsmt(?!FinSF\\d|.*SF$|.*Bath$)")]) {
+      
+      to_convert[which(is.na(to_convert[[na_col]])), na_col] <- "None"
+      
+    } else{
+      
+      if (class(to_convert[[na_col]]) == "character") {
+        
+        to_convert[which(is.na(to_convert[[na_col]])), na_col] <-
+          names(which.max(table(to_convert[[na_col]])))
+        
+      } else if (class(to_convert[[na_col]]) == "numeric") {
+        
+        to_convert[which(is.na(to_convert[[na_col]])), na_col] <-
+          as.numeric(which.max(table(to_convert[[na_col]])))
+        
+      } # nested else if
+      
+    } # else
+    
+  } # loop
+  
+  # Rename colnames to avoid any that start with a digit
+  
+  colnames(to_convert)[str_which(string = colnames(to_convert),
+                                 pattern = "^\\d")][1] <- "FirstFlrSF"
+  
+  colnames(to_convert)[str_which(string = colnames(to_convert),
+                                 pattern = "^\\d")][1] <- "SecondFlrSF"
+  
+  colnames(to_convert)[str_which(string = colnames(to_convert),
+                                 pattern = "^\\d")][1] <- "ThreeSsnPorch"
+  
+  if (any(grepl(pattern = "^\\d", colnames(to_convert)))) {
+    warning("ERROR! Check that there are no column names that start with a digit!")
+  }
+  
+  # Get columns with numeric values
+  
+  numeric_cols <- sapply(X = colnames(to_convert), FUN = function(c) {
+    
+    ifelse(test = class(to_convert[[c]]) == "numeric", yes = TRUE, no = FALSE)
+    
+  })
+  
+  # Isolate columns with numeric values
+  
+  num_test <- to_convert[, numeric_cols]
+  
+  # Isolate columns with character values
+  
+  chr_test <- to_convert[, !numeric_cols]
+  
+  # Get columns with quality/condition information
+  
+  qu_cols <- colnames(chr_test)[str_detect(string = colnames(chr_test), pattern = ".Q.|.Cond$")]
+  
+  # Convert character ratings to numeric ones - these will still be categorical features
+  
+  for (c in qu_cols) {
+    
+    chr_test[[c]] <- replace(x = chr_test[[c]], list = chr_test[[c]] == "Ex", values = 5)
+    
+    chr_test[[c]] <- replace(x = chr_test[[c]], list = chr_test[[c]] == "Gd", values = 4)
+    
+    chr_test[[c]] <- replace(x = chr_test[[c]],  list = chr_test[[c]] == "TA", values = 3)
+    
+    chr_test[[c]] <- replace(x = chr_test[[c]], list = chr_test[[c]] == "Fa", values = 2)
+    
+    chr_test[[c]] <- replace(x = chr_test[[c]], list = chr_test[[c]] == "Po", values = 1)
+    
+    chr_test[[c]] <- replace(x = chr_test[[c]],
+                             list = !chr_test[[c]] %in% c(1, 2, 3, 4, 5), values = 0)
+    
+    chr_test[[c]] <- factor(x = as.numeric(chr_test[[c]]))
+    
+  } # loop
+  
+  # Add the (now) numeric columns of chr_test to num_test
+  
+  num_test <- to_convert[, numeric_cols] %>%
+    bind_cols(chr_test[, qu_cols])
+  
+  # Modify some of the character value columns as they were modified in the training set
+  
+  updated_cols <- c("MSZoning", "Neighborhood", "MasVnrType", "Foundation",
+                    "BsmtExposure", "Electrical", "GarageType", "GarageFinish")
+  
+  for (col in updated_cols) {
+    
+    replacement <- data.frame(filter(.data = original, GarageCars < 4) %>% select(col),
+                              new = final[[col]],
+                              stringsAsFactors = FALSE) %>%
+      distinct() %>%
+      mutate_at(col, .funs = factor)
+    
+    for (i in 1:nrow(replacement)) {
+      
+      chr_test[[col]] <- replace(x = chr_test[[col]],
+                                 list = chr_test[[col]] == replacement[i, col],
+                                 values = replacement[i, "new"])
+      
+    } # nested loop
+    
+  } # loop
+  
+  # Add the new numeric columns of chr_test to num_test
+  
+  num_test <- to_convert[, numeric_cols] %>%
+    bind_cols(chr_test[, qu_cols]) %>%
+    bind_cols(chr_test[, updated_cols]) %>%
+    mutate_all(.funs = as.numeric) %>%
+    select(-c(Id))
+  
+  # Filtering and feature engineering based on the correlogram
+  
+  # Combine columns to create new features
+  
+  # Then remove the old columns
+  
+  num_test <- num_test %>%
+    mutate(AgeSold = YrSold - YearBuilt) %>%
+    select(-c(YrSold, YearBuilt, MoSold)) %>%
+    mutate(Pool = PoolArea * PoolQC) %>%
+    select(-c(PoolArea, PoolQC))
+  
+  # Filter out some data
+  
+  num_test <- num_test %>%
+    # filter(GarageCars < 4) %>% # no need to filter out these in the test set
+    select(-c(ThreeSsnPorch, MiscVal, BsmtHalfBath,
+              OverallCond, ExterCond, BsmtFinSF2,
+              LowQualFinSF))
+  
+  if (colnames(final)[which(!colnames(final) %in% colnames(num_test))] == "SalePrice") {
+    
+    return(num_test)
+    
+  } else {
+    
+    warning("ERROR! Data modification was not successful!")
+    
+  }
+  
+} # function
+
+```
+
+```{r, predictions, include = FALSE}
+
+# Make predictions of SalePrice on the test set using the ML models fitted above
+
+# Transform the test set into an appropriate format (similar to that of the training set)
+
+new_test <- modify_data(to_convert = test, original = train, final = num_train)
+
+# Make predictions of SalePrice on the test set using all the fitted ML models
+
+submissions <- list()
+
+for (m in models) {
+  
+  log_trans_preds <- predict(object = fits[[m]], newdata = new_test)
+
+  submissions[[m]] <- expm1(log_trans_preds) # expm1 to reverse the SalePrice log1p transformation
+  
+} # loop
+
+# Ensemble predictions using models with RMSE <= max_rmse on the test set
+
+ensemble_preds <- submissions[best_models]
+
+all_ensemble_preds <- do.call(what = cbind, args = ensemble_preds)
+
+submissions[["ensemble"]] <- rowMeans(all_ensemble_preds)
+
+```
+
+```{r, predictions_scaled, include = FALSE}
+
+# Make predictions of SalePrice on the test set using the ML models fitted above
+
+# Transform the test set into an appropriate format (similar to that of the training set)
+
+new_test <- modify_data(to_convert = test, original = train, final = num_train)
+
+scaled_test <- scale(x = new_test, center = TRUE, scale = TRUE) %>% data.frame() # standardization
+
+# Make predictions of SalePrice on the test set using all the fitted ML models
+
+submissions_scaled <- list()
+
+MU <- mean(train$SalePrice)
+
+SD <- sd(train$SalePrice)
+
+for (m in models) {
+  
+  log_trans_preds <- (predict(object = fits_scaled[[m]], newdata = scaled_test) * SD) + MU
+
+  submissions_scaled[[m]] <- expm1(log_trans_preds)
+  
+} # loop
+
+# Ensemble predictions using models with RMSE <= max_rmse_scaled
+
+ensemble_preds_scaled <- submissions_scaled[best_models]
+
+all_ensemble_preds_scaled <- do.call(what = cbind, args = ensemble_preds_scaled)
+
+submissions_scaled[["ensemble"]] <- rowMeans(all_ensemble_preds_scaled)
+
+```
+
+```{r, final_submission, include = FALSE}
+
+# Create and save a CSV file with the predictions for each model
+
+for (m in names(submissions)) {
+  
+  final_submission <- data.frame(Id = test$Id,
+                                 SalePrice = submissions[[m]],
+                                 stringsAsFactors = FALSE)
+  
+  # Save the predictions in a CSV file that is compatible with Kaggle's requirements
+  
+  if (class(final_submission$Id) == "numeric" & class(final_submission$SalePrice) == "numeric") {
+    
+    write.table(x = final_submission, file = paste0("predictions/SalePrice_", m, "_preds.csv"),
+                sep = ",", col.names = TRUE, row.names = FALSE, quote = FALSE)
+    
+  } else {
+    
+    warning("Error!")
+    
+  }
+  
+} # loop
+
+```
+
+```{r, final_submission_scaled, include = FALSE}
+
+# Create and save a CSV file with the predictions for each model
+
+for (m in names(submissions_scaled)) {
+  
+  final_submission_scaled <- data.frame(Id = test$Id,
+                                        SalePrice = submissions_scaled[[m]],
+                                        stringsAsFactors = FALSE)
+  
+  # Save the predictions in a CSV file that is compatible with Kaggle's requirements
+  
+  if (class(final_submission_scaled$Id) == "numeric" &
+      class(final_submission_scaled$SalePrice) == "numeric") {
+    
+    write.table(x = final_submission_scaled,
+                file = paste0("predictions_scaled/SalePrice_", m, "_scaled_preds.csv"),
+                sep = ",", col.names = TRUE, row.names = FALSE, quote = FALSE)
+    
+  } else {
+    
+    warning("Error!")
+    
+  }
+  
+} # loop
+
+```
+
+# Conclusion
+
+The aim of this project was to use different data science and ML techniques to predict house prices using the Kaggle *House Prices: Advanced Regression Techniques* dataset. To achieve this there were several steps. Firstly, *NA* values were detected and replaced with apropriate values. Secondly, continuous and ordinal/categorical fetures were identified and appropriately plotted against *SalePrice* to examine the relationship between each pair.Thirdly, features that were identified to have an effect on the target feature, were isolated. Some of these contained character values and hence dummy coding was needed to convert these into numeric values. Fourthly, a correlogram was consulted to identify features that were correlated with *SalePrice* and had a significant p-value for their correlation coefficient. Additionally, this enabled some features to be removed of combined into one new feature. Then, different regression ML models were fitted on the selected features and *SalePrice* predictions were made. the best performing models were selected and used to make *SalePrice* predictions on the test set, which were then submitted to the Kaggle competition. As shown above, an **ensemble** approach, using several ML algorithms, was the best at predicting *SalePrice*.
+
+There were several challeges associated with this project. How to best fill in any *NAs* was not straightforward. This could have been done in a different way and would result in different predictions at the end. Also, the [dummy coding](https://machinelearningmastery.com/why-one-hot-encode-data-in-machine-learning/) used can be more specifically called **integer encoding**. One could also use **one-hot encoding**. This is where the integer encoded variable is removed and a new binary variable is added for each unique integer value. This could improve the predictions and should be used in further work. In addition, some features could be combined to create new ones. This was also challenging and could be done in several different ways, leaving many unexplored possibilities. Also, there are many ML regression models that could be fitted and each one uses different tunable parameters. The ML models used and the range for each tunable parameter could be further explored to develop more accurate models.
+
+Overall, this project was very interesting and exciting and carried with it the extra enthusiasm of participating in a Kaggle competition. It provided a great opportunity to learn about the different features that affect a house's price and to test and explore different ML algorithms. Having the chance to be introduced to and use the XGBoost algorithm was very helpfull and has placed another tool in my data science arsenal. Looking forward to completing more ML projects and participating in Kaggle competitions.
+
+\newpage
+
+# Appendix
+
+## RMSE function {#rmse_code}
+
+```{r, rmse_function_code, eval = TRUE}
+
+RMSE <- function(true_ratings, predicted_ratings) {
+  
+  sqrt(mean((true_ratings - predicted_ratings)^2))
+  
+}
+
+```
+
+## Modify the test set to match the training set {#modify_data}
+
+```{r, modify_data_function_code, eval = FALSE}
+
+# Data transformation function
+
+# This combines all the data wrangling and modification methods/techniques
+# used on the training set throughout the project i.e. replacing NAs,
+# modifying columns etc.
+# It is used to convert the test set in the same format as the
+# training set in order to be able to make predictions using different ML models.
+# These ML models were fit on the training set after it had been modified and hence
+# they could not be used with the original test set to make predictions
+# as the test set would
+# be in a different format to the modified training set that the ML models were fit onto.
+
+# NOTE: This function should be run only from this point onwards. This is because
+# at some points, the function compares variables in num_train
+# to variables in test and uses the differences to properly rename/modify feature entries.
+# Hence, for this comparison and modifications to work,
+# num_train must be in its final format.
+
+modify_data <- function(to_convert, original, final) {
+  
+  # to_convert: the data frame that is to be converted
+  # original: the original working template
+  # final: the final/modified working template
+  # original and final will be used to make appropriate modification to to_convert
+  
+  # Remove GarageYrBlt column
+  
+  to_convert <- to_convert %>% select(-GarageYrBlt)
+  
+  # Detect columns with NAs
+  
+  na_values <- map_df(.x = colnames(to_convert), .f = function(c) {
+    
+    num_na <- sum(is.na(to_convert[[c]]))
+    
+    if (num_na != 0) {
+      
+      data.frame(col = c,
+                 na_n = num_na,
+                 na_pct = mean(is.na(to_convert[[c]])),
+                 stringsAsFactors = FALSE)
+      
+    } # if
+    
+  }) # map_df
+  
+  # Replace NAs as in the training set
+  
+  for (na_col in na_values$col) {
+    
+    if (na_col == "PoolQC") {
+      
+      to_convert[which(is.na(to_convert$PoolQC)), "PoolQC"] <- "None"
+      
+    } else if (na_col == "MiscFeature") {
+      
+      to_convert[which(is.na(to_convert$MiscFeature)), "MiscFeature"] <- "None"
+      
+    } else if (na_col == "Alley") {
+      
+      to_convert[which(is.na(to_convert$Alley)), "Alley"] <- "None"
+      
+    } else if (na_col == "Fence") {
+      
+      to_convert[which(is.na(to_convert$Fence)), "Fence"] <- "None"
+      
+    } else if (na_col == "FireplaceQu") {
+      
+      to_convert[which(is.na(to_convert$FireplaceQu)), "FireplaceQu"] <- "None"
+      
+    } else if (na_col == "LotFrontage") {
+      
+      to_convert[which(is.na(to_convert$LotFrontage)), "LotFrontage"] <-
+        mean(to_convert$LotFrontage[!is.na(to_convert$LotFrontage)])
+      
+    } else if (na_col == "MasVnrType") {
+      
+      to_convert[which(is.na(to_convert$MasVnrType)), "MasVnrType"] <-
+        names(which.max(table(to_convert$MasVnrType)))
+      
+    } else if (na_col == "MasVnrArea") {
+      
+      to_convert[which(is.na(to_convert$MasVnrArea)), "MasVnrArea"] <- 0
+      
+    } else if (na_col == "Electrical") {
+      
+      to_convert[which(is.na(to_convert$Electrical)), "Electrical"] <-
+        names(which.max(table(to_convert$Electrical)))
+      
+    } else if (na_col %in%
+               na_values$col[str_detect(string = na_values$col,
+                                        pattern = "^Garage(?!Y|A|.*Cars$)")]) {
+      
+      to_convert[which(is.na(to_convert[[na_col]])), na_col] <- "None"
+      
+    } else if (na_col %in%
+               na_values$col[str_detect(string = na_values$col,
+                                        pattern = "^Bsmt(?!FinSF\\d|.*SF$|.*Bath$)")]) {
+      
+      to_convert[which(is.na(to_convert[[na_col]])), na_col] <- "None"
+      
+    } else{
+      
+      if (class(to_convert[[na_col]]) == "character") {
+        
+        to_convert[which(is.na(to_convert[[na_col]])), na_col] <-
+          names(which.max(table(to_convert[[na_col]])))
+        
+      } else if (class(to_convert[[na_col]]) == "numeric") {
+        
+        to_convert[which(is.na(to_convert[[na_col]])), na_col] <-
+          as.numeric(which.max(table(to_convert[[na_col]])))
+        
+      } # nested else if
+      
+    } # else
+    
+  } # loop
+  
+  # Rename colnames to avoid any that start with a digit
+  
+  colnames(to_convert)[str_which(string = colnames(to_convert),
+                                 pattern = "^\\d")][1] <- "FirstFlrSF"
+  
+  colnames(to_convert)[str_which(string = colnames(to_convert),
+                                 pattern = "^\\d")][1] <- "SecondFlrSF"
+  
+  colnames(to_convert)[str_which(string = colnames(to_convert),
+                                 pattern = "^\\d")][1] <- "ThreeSsnPorch"
+  
+  if (any(grepl(pattern = "^\\d", colnames(to_convert)))) {
+    warning("ERROR! Check that there are no column names that start with a digit!")
+  }
+  
+  # Get columns with numeric values
+  
+  numeric_cols <- sapply(X = colnames(to_convert), FUN = function(c) {
+    
+    ifelse(test = class(to_convert[[c]]) == "numeric", yes = TRUE, no = FALSE)
+    
+  })
+  
+  # Isolate columns with numeric values
+  
+  num_test <- to_convert[, numeric_cols]
+  
+  # Isolate columns with character values
+  
+  chr_test <- to_convert[, !numeric_cols]
+  
+  # Get columns with quality/condition information
+  
+  qu_cols <- colnames(chr_test)[str_detect(string = colnames(chr_test),
+                                           pattern = ".Q.|.Cond$")]
+  
+  # Convert character ratings to numeric ones - these will still be categorical features
+  
+  for (c in qu_cols) {
+    
+    chr_test[[c]] <- replace(x = chr_test[[c]], list = chr_test[[c]] == "Ex", values = 5)
+    
+    chr_test[[c]] <- replace(x = chr_test[[c]], list = chr_test[[c]] == "Gd", values = 4)
+    
+    chr_test[[c]] <- replace(x = chr_test[[c]],  list = chr_test[[c]] == "TA", values = 3)
+    
+    chr_test[[c]] <- replace(x = chr_test[[c]], list = chr_test[[c]] == "Fa", values = 2)
+    
+    chr_test[[c]] <- replace(x = chr_test[[c]], list = chr_test[[c]] == "Po", values = 1)
+    
+    chr_test[[c]] <- replace(x = chr_test[[c]],
+                             list = !chr_test[[c]] %in% c(1, 2, 3, 4, 5), values = 0)
+    
+    chr_test[[c]] <- factor(x = as.numeric(chr_test[[c]]))
+    
+  } # loop
+  
+  # Add the (now) numeric columns of chr_test to num_test
+  
+  num_test <- to_convert[, numeric_cols] %>%
+    bind_cols(chr_test[, qu_cols])
+  
+  # Modify some of the character value columns as they were modified in the training set
+  
+  updated_cols <- c("MSZoning", "Neighborhood", "MasVnrType", "Foundation",
+                    "BsmtExposure", "Electrical", "GarageType", "GarageFinish")
+  
+  for (col in updated_cols) {
+    
+    replacement <- data.frame(filter(.data = original, GarageCars < 4) %>% select(col),
+                              new = final[[col]],
+                              stringsAsFactors = FALSE) %>%
+      distinct() %>%
+      mutate_at(col, .funs = factor)
+    
+    for (i in 1:nrow(replacement)) {
+      
+      chr_test[[col]] <- replace(x = chr_test[[col]],
+                                 list = chr_test[[col]] == replacement[i, col],
+                                 values = replacement[i, "new"])
+      
+    } # nested loop
+    
+  } # loop
+  
+  # Add the new numeric columns of chr_test to num_test
+  
+  num_test <- to_convert[, numeric_cols] %>%
+    bind_cols(chr_test[, qu_cols]) %>%
+    bind_cols(chr_test[, updated_cols]) %>%
+    mutate_all(.funs = as.numeric) %>%
+    select(-c(Id))
+  
+  # Filtering and feature engineering based on the correlogram
+  
+  # Combine columns to create new features
+  
+  # Then remove the old columns
+  
+  num_test <- num_test %>%
+    mutate(AgeSold = YrSold - YearBuilt) %>%
+    select(-c(YrSold, YearBuilt, MoSold)) %>%
+    mutate(Pool = PoolArea * PoolQC) %>%
+    select(-c(PoolArea, PoolQC))
+  
+  # Filter out some data
+  
+  num_test <- num_test %>%
+    # filter(GarageCars < 4) %>% # no need to filter out these in the test set
+    select(-c(ThreeSsnPorch, MiscVal, BsmtHalfBath,
+              OverallCond, ExterCond, BsmtFinSF2,
+              LowQualFinSF))
+  
+  if (colnames(final)[which(!colnames(final) %in% colnames(num_test))] == "SalePrice") {
+    
+    return(num_test)
+    
+  } else {
+    
+    warning("ERROR! Data modification was not successful!")
+    
+  }
+  
+} # function
+
+```
+
+\newpage
+
+## Rank deficiency test {#rank_deficiency_test}
+
+```{r, rank_deficiency_code, eval = FALSE}
+
+# Get the matrix's rank - check for rank deficiency
+
+# If rank deficient, check which columns maximize the rank when removed and then
+# check how these correlate with SalePrice. Remove those with low/no correlation
+
+if (qr(num_train)$rank != ncol(num_train)) {
+  
+  # Check which columns, if removed, maximize the rank
+  
+  rankifremoved <- sapply(X = 1:ncol(num_train), function (x) {
+    qr(num_train[, -x])$rank
+  })
+  
+  which(rankifremoved == max(rankifremoved))
+  
+  # Check which columns, from the linearly dependent ones, can be removed
+  
+  # Check feature correlation with SalePrice
+  
+  rank_test <- bind_cols(num_train["SalePrice"],
+                         num_train[, which(rankifremoved == max(rankifremoved))])
+  
+  cor_rank_test <- rcorr(x = as.matrix(rank_test),
+                         type = c("pearson","spearman"))
+  
+  corrplot(corr = cor_rank_test$r,
+           p.mat = cor_rank_test$P,
+           order = "hclust",
+           sig.level = 0.01,
+           type = "upper",
+           insig = "blank",
+           tl.cex = 0.9, tl.col = "black", tl.srt = 90)
+  
+} else {
+  
+  print("Rank deficiency test: OK")
+  
+}
+
+# Remove any problematic columns with low correlation with SalePrice
+
+```
+
+\newpage
+
+## Gradient Boosting Machines (gbm_h2o) {#gbm_h2o}
+
+```{r, gbm_h2o, eval = FALSE}
+
+# Not sure if it is worth running this model - might include it later
+
+# RMSE: 0.11
+
+model <- "gbm_h2o"
+
+# modelLookup(model)
+
+if(!require(h2o)) {install.packages("h2o")}
+
+set.seed(1)
+
+h2o.init()
+
+h2o.no_progress()
+
+before <- Sys.time()
+
+set.seed(1)
+
+fits[[model]] <- train(SalePrice ~ ., data = num_train, method = model, trControl = control)
+
+preds[[model]] <- predict(object = fits[[model]], newdata = num_train)
+
+rmses[[model]] <- RMSE(preds[[model]], num_train$SalePrice)
+
+rmses[[model]]
+
+after <- Sys.time()
+
+durations[[model]] <- difftime(after, before, units = 'mins')
+
+durations[[model]]
+
+h2o.removeAll()
+
+h2o.shutdown(prompt = FALSE)
+
+detach("package:h2o", unload = TRUE)
+
+rmse_results <- bind_rows(rmse_results,
+                          data.frame(model = model,
+                                     RMSE = rmses[[model]],
+                                     time = durations[[model]],
+                                     stringsAsFactors = FALSE))
+
+```
+
+\newpage
+
+## Operating system
+
+```{r, operating_system, echo = FALSE}
+
+version
+
+```
+
+## R session information
+
+```{r, session_info, echo = FALSE}
+
+sessionInfo()
+
+```
+
+---
