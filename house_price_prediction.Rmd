@@ -57,7 +57,7 @@ options(tinytex.verbose = TRUE)
 
 # Set working directory
 
-# setwd(file.path(Sys.getenv("HOME"), "Desktop/house_price_prediction/"))
+setwd(file.path(Sys.getenv("HOME"), "Desktop/data_science_HarvardX/house_price_prediction/"))
 
 ```
 
@@ -1213,7 +1213,7 @@ data.frame(Model = c("xgbLinear", "rf (standardised)", "rf",
   row_spec(row = 1:8, color = "black") %>%
   row_spec(row = 1, background = "red", bold = TRUE) %>%
   row_spec(row = 8, background = "green", bold = TRUE) %>%
-  footnote(general = "The observed SalePrice values are knly known by Kaggle")
+  footnote(general = "The observed SalePrice values are only known by Kaggle")
 
 ```
 
@@ -1589,11 +1589,11 @@ for (m in names(submissions_scaled)) {
 
 # Conclusion
 
-The aim of this project was to use different data science and ML techniques to predict house prices using the Kaggle *House Prices: Advanced Regression Techniques* dataset. To achieve this there were several steps. Firstly, *NA* values were detected and replaced with apropriate values. Secondly, continuous and ordinal/categorical fetures were identified and appropriately plotted against *SalePrice* to examine the relationship between each pair.Thirdly, features that were identified to have an effect on the target feature, were isolated. Some of these contained character values and hence dummy coding was needed to convert these into numeric values. Fourthly, a correlogram was consulted to identify features that were correlated with *SalePrice* and had a significant p-value for their correlation coefficient. Additionally, this enabled some features to be removed of combined into one new feature. Then, different regression ML models were fitted on the selected features and *SalePrice* predictions were made. the best performing models were selected and used to make *SalePrice* predictions on the test set, which were then submitted to the Kaggle competition. As shown above, an **ensemble** approach, using several ML algorithms, was the best at predicting *SalePrice*.
+The aim of this project was to use different data science and ML techniques to predict house prices using the Kaggle *House Prices: Advanced Regression Techniques* dataset. To achieve this there were several steps. Firstly, *NA* values were detected and replaced with appropriate values. Secondly, continuous and ordinal/categorical fetures were identified and appropriately plotted against *SalePrice* to examine the relationship between each pair. Thirdly, features that were identified to have an effect on the target feature, were isolated. Some of these contained character values and hence dummy coding was needed to convert these into numeric ones Fourthly, a correlogram was consulted to identify features that were correlated with *SalePrice* and had a significant p-value for their correlation coefficient. Additionally, this enabled some features to be removed or combined into one new feature. Then, different regression ML models were fitted on the selected features and *SalePrice* predictions were made. The best performing models were selected and used to make *SalePrice* predictions on the test set, which were then submitted to the Kaggle competition. As shown above, an **ensemble** approach, using several ML algorithms, was the best at predicting *SalePrice*.
 
-There were several challeges associated with this project. How to best fill in any *NAs* was not straightforward. This could have been done in a different way and would result in different predictions at the end. Also, the [dummy coding](https://machinelearningmastery.com/why-one-hot-encode-data-in-machine-learning/) used can be more specifically called **integer encoding**. One could also use **one-hot encoding**. This is where the integer encoded variable is removed and a new binary variable is added for each unique integer value. This could improve the predictions and should be used in further work. In addition, some features could be combined to create new ones. This was also challenging and could be done in several different ways, leaving many unexplored possibilities. Also, there are many ML regression models that could be fitted and each one uses different tunable parameters. The ML models used and the range for each tunable parameter could be further explored to develop more accurate models.
+There were several challeges associated with this project. How to best fill in any *NAs* was not straightforward. This could have been done in a different way and would result in different predictions at the end. Also, the [dummy coding](https://machinelearningmastery.com/why-one-hot-encode-data-in-machine-learning/) performed can be more specifically called **integer encoding**. One could use **one-hot encoding** instead. This is where the integer encoded variable is removed and a new binary variable is added for each unique integer value. This could improve the predictions and should be used in further work. In addition, some features could be combined to create new ones. This was also challenging and could be done in several different ways, leaving many unexplored possibilities for future improvement. Also, there are many ML regression models that could be fitted and each one uses different tunable parameters. The ML models used and the range for each tunable parameter could be further explored to develop more accurate models.
 
-Overall, this project was very interesting and exciting and carried with it the extra enthusiasm of participating in a Kaggle competition. It provided a great opportunity to learn about the different features that affect a house's price and to test and explore different ML algorithms. Having the chance to be introduced to and use the XGBoost algorithm was very helpfull and has placed another tool in my data science arsenal. Looking forward to completing more ML projects and participating in Kaggle competitions.
+Overall, this project was very interesting and exciting and carried with it the extra enthusiasm of participating in a Kaggle competition. It provided a great opportunity to learn about the different features that affect a house's price and to test and explore different ML algorithms. Having the chance to be introduced to and use the XGBoost algorithm was very helpfull and has placed another tool in my data science arsenal. Looking forward to completing more ML projects and participating in challenging Kaggle competitions.
 
 \newpage
 
@@ -1936,7 +1936,8 @@ before <- Sys.time()
 
 set.seed(1)
 
-fits[[model]] <- train(SalePrice ~ ., data = num_train, method = model, trControl = control)
+fits[[model]] <- train(SalePrice ~ ., data = num_train, method = model,
+                       trControl = control)
 
 preds[[model]] <- predict(object = fits[[model]], newdata = num_train)
 

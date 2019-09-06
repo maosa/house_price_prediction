@@ -39,7 +39,7 @@ if(!is.null(dev.list())) { dev.off() }
 
 # Set working directory
 
-# setwd(file.path(Sys.getenv("HOME"), "Desktop/house_price_prediction/"))
+# setwd(file.path(Sys.getenv("HOME"), "Desktop/data_science_HarvardX/house_price_prediction/"))
 
 ################################################################################
 ################################################################################
